@@ -5,7 +5,7 @@ A collection of Claude skills — modular instruction sets that extend Claude's 
 Install any skill with a single command:
 
 ```bash
-npx openskills install your-username/claude-skills/chameleon
+npx openskills install mdkouki/claude-skills/chameleon
 ```
 
 ---
@@ -46,13 +46,13 @@ Point Chameleon at any project and it reads the source to surface everything a n
 **Install:**
 
 ```bash
-npx openskills install your-username/claude-skills/chameleon
+npx openskills install mdkouki/claude-skills/chameleon
 ```
 
 **Or install globally:**
 
 ```bash
-npx openskills install your-username/claude-skills/chameleon --global
+npx openskills install mdkouki/claude-skills/chameleon --global
 ```
 
 **Trigger phrases:**
@@ -75,13 +75,13 @@ Requires [Node.js](https://nodejs.org/) 20.6+ and Git.
 
 ```bash
 # Install a skill (project-local, default)
-npx openskills install your-username/claude-skills/chameleon
+npx openskills install mdkouki/claude-skills/chameleon
 
 # Install globally (available in all projects)
-npx openskills install your-username/claude-skills/chameleon --global
+npx openskills install mdkouki/claude-skills/chameleon --global
 
 # Install for non-Claude agents (Cursor, Windsurf, Aider…)
-npx openskills install your-username/claude-skills/chameleon --universal
+npx openskills install mdkouki/claude-skills/chameleon --universal
 
 # Sync your AGENTS.md after installing
 npx openskills sync
@@ -90,7 +90,7 @@ npx openskills sync
 **Manual install (no CLI):**
 
 ```bash
-git clone https://github.com/your-username/claude-skills.git
+git clone https://github.com/mdkouki/claude-skills.git
 cp -r claude-skills/chameleon ~/.claude/skills/
 ```
 
