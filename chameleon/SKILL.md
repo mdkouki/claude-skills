@@ -98,13 +98,19 @@ Only ask if the request is genuinely ambiguous about depth.
 
 ---
 
-### Step 2.1 — Census: count the population
+### Step 2.1 — Census, sampling plan, and file selection (single pass)
 
-Run a full census of source files, grouped by stratum:
+Run the census, compute the sampling plan, select files, and output the final read list — all in
+one script to eliminate round-trips:
 
 ```bash
 python3 - << 'EOF'
-import os, re, collections, json
+import os, re, collections, json, math, hashlib
+
+# --- Configuration (adjust MODE before running) ---
+MODE           = "standard"   # quick | standard | deep | custom
+CUSTOM_TARGET  = 0.40         # fraction, only used when MODE == "custom"
+FOCUS_DEEP     = set()        # e.g. {"service", "test"} for per-stratum overrides
 
 EXCLUDE = {
   'node_modules','.git','dist','build','__pycache__','.next',
@@ -132,6 +138,11 @@ SOURCE_EXT = {
   '.svelte','.toml','.yaml','.yml','.json','.env','.ini','.conf','.cfg',
 }
 
+ALWAYS_ALL       = {'config', 'entry'}
+MIGRATION_SAMPLE = 4
+
+# --- Helpers ---
+
 def classify(path):
   for name, pattern in STRATA:
     if re.search(pattern, path, re.IGNORECASE):
@@ -145,49 +156,12 @@ def should_exclude(path):
       return True
   return False
 
-census = collections.defaultdict(list)
-for root, dirs, files in os.walk('.'):
-  dirs[:] = [d for d in dirs if not should_exclude(d)]
-  for f in files:
-    ext = os.path.splitext(f)[1].lower()
-    if ext not in SOURCE_EXT:
-      continue
-    rel = os.path.relpath(os.path.join(root, f))
-    if not should_exclude(rel):
-      census[classify(rel)].append(rel)
-
-print(json.dumps({k: {'count': len(v), 'files': v} for k, v in sorted(census.items())}, indent=2))
-EOF
-```
-
-Save the output as your **population map**.
-
----
-
-### Step 2.2 — Compute and display the sampling plan
-
-Apply the mode formula to each stratum and print the plan **before reading any files**.
-This gives the user a chance to adjust before tokens are spent.
-
-```bash
-python3 - << 'EOF'
-import json, math, sys
-
-census = json.load(sys.stdin)   # pipe census output here
-
-MODE           = "standard"   # quick | standard | deep | custom
-CUSTOM_TARGET  = 0.40         # fraction, only used when MODE == "custom"
-FOCUS_DEEP     = set()        # e.g. {"service", "test"} for per-stratum overrides
-
-ALWAYS_ALL     = {'config', 'entry'}
-MIGRATION_SAMPLE = 4
-
-def sample_size(stratum, N, mode, target=None, focus_deep=set()):
+def sample_size(stratum, N):
     if stratum in ALWAYS_ALL or N <= 2:
         return N
     if stratum == 'migration':
         return min(N, MIGRATION_SAMPLE)
-    effective_mode = 'deep' if stratum in focus_deep else mode
+    effective_mode = 'deep' if stratum in FOCUS_DEEP else MODE
     if effective_mode == 'quick':
         return min(5,  max(2, math.ceil(math.sqrt(N) * 0.5)))
     if effective_mode == 'standard':
@@ -195,44 +169,8 @@ def sample_size(stratum, N, mode, target=None, focus_deep=set()):
     if effective_mode == 'deep':
         return min(20, max(5, math.ceil(math.sqrt(N) * 2)))
     if effective_mode == 'custom':
-        return min(N,  max(3, math.ceil(N * target)))
+        return min(N,  max(3, math.ceil(N * CUSTOM_TARGET)))
     return min(10, max(3, math.ceil(math.sqrt(N))))
-
-rows = []
-total_pop = total_n = 0
-for stratum, data in sorted(census.items()):
-    N = data['count']
-    n = sample_size(stratum, N, MODE, CUSTOM_TARGET, FOCUS_DEEP)
-    pct = round(n / N * 100) if N else 0
-    rows.append((stratum, N, n, pct))
-    total_pop += N
-    total_n   += n
-
-print(f"\nSampling plan — mode: {MODE.upper()}")
-print(f"{'stratum':<14} {'pop':>5} {'sample':>7} {'coverage':>9}")
-print("-" * 40)
-for stratum, N, n, pct in rows:
-    note = " ← all"      if stratum in ALWAYS_ALL   else \
-           " ← deep"     if stratum in FOCUS_DEEP   else ""
-    print(f"{stratum:<14} {N:>5} {n:>7} {pct:>8}%{note}")
-print("-" * 40)
-total_pct = round(total_n / total_pop * 100) if total_pop else 0
-print(f"{'TOTAL':<14} {total_pop:>5} {total_n:>7} {total_pct:>8}%")
-EOF
-```
-
-Show this plan in your response. If overall coverage is below 10%, mention that Deep mode would
-improve confidence. If above 60%, note that Standard or Quick would be faster next time.
-
----
-
-### Step 2.3 — Select files within each stratum
-
-Use **systematic random sampling** — evenly spaced picks with a hash-derived offset so the
-start is not always index 0 (avoids A-name / early-created bias):
-
-```python
-import hashlib
 
 def systematic_sample(files, n):
     files = sorted(files)
@@ -244,15 +182,74 @@ def systematic_sample(files, n):
     return [files[(offset + i * step) % N] for i in range(n)]
 
 def migration_sample(files):
-    files = sorted(files)   # date-prefix sort = chronological
+    files = sorted(files)
     return files if len(files) <= 4 else files[:2] + files[-2:]
+
+# --- Census ---
+
+census = collections.defaultdict(list)
+for root, dirs, files in os.walk('.'):
+  dirs[:] = [d for d in dirs if not should_exclude(d)]
+  for f in files:
+    ext = os.path.splitext(f)[1].lower()
+    if ext not in SOURCE_EXT:
+      continue
+    rel = os.path.relpath(os.path.join(root, f))
+    if not should_exclude(rel):
+      census[classify(rel)].append(rel)
+
+# --- Sampling plan + file selection ---
+
+plan_rows = []
+selected = {}
+total_pop = total_n = 0
+
+for stratum in sorted(census.keys()):
+    files = census[stratum]
+    N = len(files)
+    n = sample_size(stratum, N)
+    pct = round(n / N * 100) if N else 0
+    plan_rows.append((stratum, N, n, pct))
+    total_pop += N
+    total_n   += n
+    if stratum == 'migration':
+        selected[stratum] = migration_sample(files)
+    else:
+        selected[stratum] = systematic_sample(files, n)
+
+# --- Output ---
+
+print(f"\nSampling plan — mode: {MODE.upper()}")
+print(f"{'stratum':<14} {'pop':>5} {'sample':>7} {'coverage':>9}")
+print("-" * 40)
+for stratum, N, n, pct in plan_rows:
+    note = " <- all"  if stratum in ALWAYS_ALL else \
+           " <- deep" if stratum in FOCUS_DEEP else ""
+    print(f"{stratum:<14} {N:>5} {n:>7} {pct:>8}%{note}")
+print("-" * 40)
+total_pct = round(total_n / total_pop * 100) if total_pop else 0
+print(f"{'TOTAL':<14} {total_pop:>5} {total_n:>7} {total_pct:>8}%")
+
+print("\n--- SELECTED FILES (JSON) ---")
+print(json.dumps(selected, indent=2))
+EOF
 ```
+
+Show the sampling plan table in your response. If overall coverage is below 10%, mention that
+Deep mode would improve confidence. If above 60%, note that Standard or Quick would be faster.
 
 ---
 
-### Step 2.4 — Read samples and record observations
+### Step 2.2 — Read samples in parallel and record observations
 
-Read each selected file according to this budget (scales with mode):
+**Issue all file reads in parallel.** For each stratum, fire off Read calls for every selected
+file simultaneously — do not read files one at a time. Claude Code supports multiple tool calls
+in a single response; use this to read all files across all strata in one batch.
+
+If the total number of selected files exceeds what can be read in a single batch, group them
+into batches of up to 15–20 parallel reads and issue each batch in a separate response.
+
+Read budget per file (scales with mode):
 
 | Stratum | Quick | Standard | Deep |
 |---|---|---|---|
