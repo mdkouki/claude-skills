@@ -1,0 +1,153 @@
+# Message Size Validation Design Document
+
+## Problem Statement
+
+When a message exceeds Kafka's `max.request.size` (1MB by default), the broker rejects it with a `RecordTooLargeException`. The previous behavior resulted in:
+
+1. Message stored in outbox successfully
+2. Worker attempts to send to Kafka
+3. Kafka rejects with `RecordTooLargeException`
+4. Transaction rolls back, message remains in outbox
+5. Infinite retry loop - message will never succeed
+
+### Production Incident (2026-08-20)
+
+```
+2026-08-20 16:36:35.846 ERROR [compass-task-provider-opsys,79988ccfb8fd6002,79988ccfb8fd6002] 234277 --- [outboxTaskExecutor-8] o.s.k.support.LoggingProducerListener    : Exception thrown when sending a message with key='byte[36]' and payload='byte[1314156]' to topic cc_prod_event-provider-opsyscompass:org.springframework.kafka.KafkaException: Send failed; nested exception is org.apache.kafka.common.errors.RecordTooLargeException: The message is 1314319 bytes when serialized which is larger than 1048576, which is the value of the max.request.size configuration.
+```
+
+---
+
+## Design Philosophy
+
+The outbox pattern guarantees **eventual delivery** as part of the business transaction. If we accept a message we know cannot be delivered, we break this promise.
+
+**Principle**: Fail fast at write time for messages that can never succeed.
+
+For oversized messages, we know with absolute certainty they cannot be delivered - so we should not accept them.
+
+---
+
+## Solution
+
+Validate message size **before** persisting to the outbox. If the serialized message exceeds the configured maximum, throw `MessageTooLargeException` and fail the original business transaction.
+
+### Implementation
+
+#### MessageTooLargeException
+
+New runtime exception thrown when message size validation fails:
+
+```java
+public class MessageTooLargeException extends RuntimeException {
+    private final int messageSize;
+    private final int maxSize;
+
+    // Message: "Message size X bytes exceeds the maximum allowed size of Y bytes.
+    //           The message cannot be stored in the outbox as it would never be deliverable to Kafka."
+}
+```
+
+#### OutboxRecordFactory Changes
+
+```java
+public class OutboxRecordFactory<K, V> {
+
+    public static final int DEFAULT_MAX_MESSAGE_SIZE = 1048576; // 1 MB
+
+    @Setter
+    private int maxMessageSize = DEFAULT_MAX_MESSAGE_SIZE;
+
+    public OutboxRecord create(ProducerRecord<K, V> producerRecord, String createdBy) {
+        // ... serialize record ...
+        var recordData = createRecordData(producerRecord, keyBytes, valueBytes);
+
+        // Validate before storing
+        validateMessageSize(recordData);
+
+        // ... build and return OutboxRecord ...
+    }
+
+    protected void validateMessageSize(byte[] recordData) {
+        if (recordData != null && recordData.length > maxMessageSize) {
+            throw new MessageTooLargeException(recordData.length, maxMessageSize);
+        }
+    }
+}
+```
+
+---
+
+## Configuration
+
+| Property | Default | Description |
+|----------|---------|-------------|
+| `outbox.max-message-size` | `1048576` | Maximum message size in bytes (1 MB) |
+
+### Example Configuration
+
+```yaml
+outbox:
+  max-message-size: 1048576  # 1 MB (matches Kafka default)
+```
+
+To allow larger messages (requires Kafka broker configuration):
+
+```yaml
+outbox:
+  max-message-size: 5242880  # 5 MB
+```
+
+---
+
+## Behavior
+
+### Before (Problematic)
+
+1. ✅ Business transaction commits with outbox record
+2. ❌ Kafka rejects oversized message
+3. ❌ Outbox retry loop forever
+
+### After (Fixed)
+
+1. ❌ `MessageTooLargeException` thrown during business transaction
+2. ❌ Business transaction rolls back
+3. ✅ Application can handle exception (log, alert, compensate)
+
+---
+
+## Benefits
+
+1. **Preserves transactional guarantee**: Messages that can't be delivered are never accepted
+2. **Fail fast**: Immediate feedback to the application
+3. **No orphaned records**: Outbox table stays clean
+4. **Configurable**: Can adjust limit if Kafka is configured for larger messages
+
+---
+
+## Considerations
+
+### Size Estimation Accuracy
+
+The validation uses the serialized protobuf `recordData` size, which is close to but not exactly the Kafka wire format. The actual Kafka message includes:
+- Record headers
+- Compression overhead (positive or negative)
+- Kafka protocol framing
+
+**Recommendation**: Set `outbox.max-message-size` slightly below Kafka's `max.request.size` to account for overhead (e.g., 900KB if Kafka limit is 1MB).
+
+---
+
+## Testing
+
+Unit tests cover:
+- `MessageTooLargeException` construction and properties
+- `OutboxRecordFactory.validateMessageSize()` boundary conditions
+- `OutboxRecordFactory.create()` rejecting oversized messages
+- Default max size constant value
+
+---
+
+## References
+
+- [Kafka max.request.size documentation](https://kafka.apache.org/documentation/#producerconfigs_max.request.size)

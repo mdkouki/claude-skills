@@ -1,0 +1,407 @@
+<title>Change Review</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+  :root{
+    --bg:#f4f5f7; --surface:#ffffff; --surface-2:#eef0f3; --border:#dbdee3;
+    --text:#1c2128; --text-dim:#5c6470; --text-faint:#8891a0;
+    --accent:#3454d1; --accent-soft:#e8ecfd;
+    --add-bg:#e4f6e9; --add-text:#166534; --add-line:#c3ecd0;
+    --del-bg:#fbe9ea; --del-text:#9f1d2c; --del-line:#f5cdd1;
+    --warn:#b6690a; --warn-soft:#fdf0dd;
+    --shadow: 0 1px 2px rgba(20,24,32,.06), 0 8px 24px rgba(20,24,32,.05);
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --bg:#14161a; --surface:#1b1e24; --surface-2:#22262e; --border:#31363f;
+      --text:#eef0f3; --text-dim:#a4acb8; --text-faint:#727a87;
+      --accent:#7f9cff; --accent-soft:#242c4a;
+      --add-bg:#122f20; --add-text:#6cd393; --add-line:#1d4a30;
+      --del-bg:#3a1418; --del-text:#f3808c; --del-line:#5c1d24;
+      --warn:#e0a63d; --warn-soft:#3a2c12;
+      --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.35);
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#14161a; --surface:#1b1e24; --surface-2:#22262e; --border:#31363f;
+    --text:#eef0f3; --text-dim:#a4acb8; --text-faint:#727a87;
+    --accent:#7f9cff; --accent-soft:#242c4a;
+    --add-bg:#122f20; --add-text:#6cd393; --add-line:#1d4a30;
+    --del-bg:#3a1418; --del-text:#f3808c; --del-line:#5c1d24;
+    --warn:#e0a63d; --warn-soft:#3a2c12;
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.35);
+  }
+
+  *{box-sizing:border-box;}
+  body{
+    margin:0; background:var(--bg); color:var(--text);
+    font-family:"IBM Plex Sans",system-ui,-apple-system,sans-serif;
+    font-size:14px; line-height:1.5;
+  }
+  code, .mono, .diff-line, .file-path{ font-family:"IBM Plex Mono",ui-monospace,Menlo,monospace; }
+
+  .app{ display:flex; flex-direction:column; height:100%; min-height:100vh; }
+
+  /* ---------- toolbar ---------- */
+  .toolbar{
+    position:sticky; top:env(safe-area-inset-top,0px); z-index:20;
+    display:flex; align-items:center; gap:14px; flex-wrap:wrap;
+    padding:12px 18px; background:var(--surface); border-bottom:1px solid var(--border);
+    box-shadow:var(--shadow);
+  }
+  .toolbar h1{ font-size:15px; font-weight:700; margin:0; letter-spacing:.01em; }
+  .toolbar .repo{ color:var(--text-faint); font-weight:500; }
+  .stat{ display:flex; align-items:center; gap:6px; font-size:12.5px; color:var(--text-dim); }
+  .stat b{ color:var(--text); font-weight:600; }
+  .pill{ display:inline-flex; align-items:center; gap:4px; padding:2px 8px; border-radius:99px; font-size:12px; font-weight:600; }
+  .pill.add{ background:var(--add-bg); color:var(--add-text); }
+  .pill.del{ background:var(--del-bg); color:var(--del-text); }
+  .spacer{ flex:1; }
+  .btn{
+    appearance:none; border:1px solid var(--border); background:var(--surface-2); color:var(--text);
+    font:inherit; font-weight:600; font-size:12.5px; padding:7px 12px; border-radius:8px; cursor:pointer;
+    transition:filter .12s ease, transform .05s ease;
+  }
+  .btn:hover{ filter:brightness(1.06); }
+  .btn:active{ transform:translateY(1px); }
+  .btn.primary{ background:var(--accent); border-color:var(--accent); color:#fff; }
+  .btn.ghost-add{ background:var(--add-bg); border-color:var(--add-line); color:var(--add-text); }
+  .btn.ghost-del{ background:var(--del-bg); border-color:var(--del-line); color:var(--del-text); }
+  .btn:disabled{ opacity:.45; cursor:default; }
+  .btn.small{ padding:4px 9px; font-size:11.5px; border-radius:6px; }
+
+  /* ---------- layout ---------- */
+  .body{ flex:1; display:flex; min-height:0; }
+  .sidebar{
+    width:280px; flex:0 0 280px; border-right:1px solid var(--border); background:var(--surface);
+    overflow-y:auto; padding:10px 0;
+  }
+  .main{ flex:1; min-width:0; overflow-y:auto; padding:20px 24px 60px; }
+
+  @media (max-width: 760px){
+    .body{ flex-direction:column; }
+    .sidebar{ width:100%; flex:0 0 auto; max-height:38vh; border-right:none; border-bottom:1px solid var(--border); }
+  }
+
+  /* ---------- file tree ---------- */
+  .tree-item{
+    display:flex; align-items:center; gap:8px; width:100%; text-align:left;
+    padding:7px 14px; border:none; background:none; color:var(--text); font:inherit; font-size:12.8px;
+    cursor:pointer; border-left:3px solid transparent;
+  }
+  .tree-item:hover{ background:var(--surface-2); }
+  .tree-item.active{ background:var(--accent-soft); border-left-color:var(--accent); }
+  .tree-item .type-badge{
+    flex:0 0 16px; height:16px; width:16px; border-radius:4px; font-size:10px; font-weight:700;
+    display:flex; align-items:center; justify-content:center; font-family:"IBM Plex Mono",monospace;
+  }
+  .type-badge.modified{ background:var(--warn-soft); color:var(--warn); }
+  .type-badge.added{ background:var(--add-bg); color:var(--add-text); }
+  .type-badge.deleted{ background:var(--del-bg); color:var(--del-text); }
+  .tree-item .fname{ flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .tree-item .fcounts{ flex:0 0 auto; font-size:11px; color:var(--text-faint); display:flex; gap:5px; }
+  .tree-item .fcounts .a{ color:var(--add-text); } .tree-item .fcounts .d{ color:var(--del-text); }
+  .tree-item .decision-dot{ flex:0 0 7px; width:7px; height:7px; border-radius:99px; background:var(--border); }
+  .tree-item .decision-dot.accept{ background:var(--add-text); }
+  .tree-item .decision-dot.reject{ background:var(--del-text); }
+  .tree-item .decision-dot.partial{ background:var(--warn); }
+  .sidebar-empty{ padding:24px 16px; color:var(--text-faint); font-size:13px; }
+
+  /* ---------- file header ---------- */
+  .file-header{
+    display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:14px;
+    padding-bottom:12px; border-bottom:1px solid var(--border);
+  }
+  .file-path{ font-size:14px; font-weight:600; word-break:break-all; }
+  .view-toggle{ display:flex; border:1px solid var(--border); border-radius:8px; overflow:hidden; }
+  .view-toggle button{
+    border:none; background:var(--surface); color:var(--text-dim); font:inherit; font-size:12px; font-weight:600;
+    padding:6px 11px; cursor:pointer;
+  }
+  .view-toggle button.active{ background:var(--accent); color:#fff; }
+
+  /* ---------- hunks ---------- */
+  .hunk{
+    display:grid; grid-template-columns:1fr 34px 1fr; gap:0; margin-bottom:16px;
+    border:1px solid var(--border); border-radius:10px; overflow:hidden; background:var(--surface);
+    box-shadow:var(--shadow);
+  }
+  .hunk-side{ overflow-x:auto; }
+  .hunk-side.old{ border-right:1px solid var(--border); }
+  .hunk-toolbar{
+    grid-column:1 / -1; display:flex; align-items:center; gap:8px; padding:6px 10px;
+    background:var(--surface-2); border-bottom:1px solid var(--border); font-size:11.5px; color:var(--text-faint);
+  }
+  .hunk-toolbar .loc{ font-family:"IBM Plex Mono",monospace; }
+  .hunk-toolbar .spacer{ flex:1; }
+  .connector{
+    display:flex; align-items:center; justify-content:center; background:var(--surface-2);
+    border-right:1px solid var(--border); color:var(--text-faint);
+  }
+  .diff-line{
+    display:flex; font-size:12.3px; white-space:pre; min-height:20px;
+  }
+  .diff-line .ln{
+    flex:0 0 38px; text-align:right; padding:1px 8px; color:var(--text-faint); user-select:none;
+    border-right:1px solid var(--border);
+  }
+  .diff-line .txt{ padding:1px 10px 1px 8px; overflow-x:visible; flex:1; }
+  .diff-line.ctx .txt{ color:var(--text-dim); }
+  .diff-line.del{ background:var(--del-bg); }
+  .diff-line.del .txt{ color:var(--del-text); }
+  .diff-line.add{ background:var(--add-bg); }
+  .diff-line.add .txt{ color:var(--add-text); }
+  .hunk.decided-reject .hunk-side.new .diff-line.add{ opacity:.35; }
+  .hunk.decided-reject .hunk-side.old{ box-shadow: inset 0 0 0 2px var(--del-line); }
+  .hunk.decided-accept .hunk-side.new{ box-shadow: inset 0 0 0 2px var(--add-line); }
+
+  .full-file{
+    border:1px solid var(--border); border-radius:10px; overflow:hidden; background:var(--surface); box-shadow:var(--shadow);
+  }
+  .full-file .diff-line .ln{ flex:0 0 46px; }
+
+  .banner{
+    display:flex; align-items:center; gap:10px; padding:10px 14px; border-radius:10px;
+    background:var(--accent-soft); color:var(--accent); font-size:12.8px; font-weight:600; margin-bottom:16px;
+  }
+  .banner.done{ background:var(--add-bg); color:var(--add-text); }
+
+  .empty-state{ display:flex; flex-direction:column; align-items:center; justify-content:center; height:60vh; color:var(--text-faint); gap:8px; }
+  .empty-state svg{ opacity:.5; }
+
+  ::-webkit-scrollbar{ width:10px; height:10px; }
+  ::-webkit-scrollbar-thumb{ background:var(--border); border-radius:99px; }
+</style>
+
+<div class="app">
+  <div class="toolbar">
+    <h1>Change Review <span class="repo" id="repoName"></span></h1>
+    <div class="stat" id="fileCountStat"></div>
+    <div class="stat"><span class="pill add" id="addPill"></span><span class="pill del" id="delPill"></span></div>
+    <div class="spacer"></div>
+    <button class="btn ghost-add small" id="acceptAllBtn">Approve all</button>
+    <button class="btn ghost-del small" id="rejectAllBtn">Reject all</button>
+    <button class="btn primary" id="submitBtn">Submit review</button>
+  </div>
+
+  <div class="body">
+    <div class="sidebar" id="sidebar"></div>
+    <div class="main" id="main"></div>
+  </div>
+</div>
+
+<script>
+(function(){
+  // ---- data injected by the skill at publish time ----
+  const DATA = window.__REVIEW_DATA__ || {generatedAt:"", repo:"", files:[]};
+
+  const state = {
+    activePath: DATA.files[0] ? DATA.files[0].path : null,
+    fileMode: {},      // path -> 'hunks' | 'full'
+    fileDecision: {},  // path -> 'accept' | 'reject' (whole-file override, e.g. add/delete)
+    hunkDecision: {},  // "path::hunkId" -> 'accept' | 'reject'
+    submitted: false,
+  };
+
+  function hkey(path, id){ return path + "::" + id; }
+  function fileByPath(p){ return DATA.files.find(f => f.path === p); }
+  function esc(s){
+    return (s ?? "").replace(/[&<>]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+  }
+  function hunkDecisionOf(path, id){ return state.hunkDecision[hkey(path,id)] || "accept"; }
+
+  function fileStatus(f){
+    if (f.changeType === "added" || f.changeType === "deleted"){
+      const d = state.fileDecision[f.path] || "accept";
+      return d;
+    }
+    if (!f.hunks.length) return "accept";
+    const decisions = f.hunks.map(h => hunkDecisionOf(f.path, h.id));
+    if (decisions.every(d => d === "accept")) return "accept";
+    if (decisions.every(d => d === "reject")) return "reject";
+    return "partial";
+  }
+
+  // ---------- sidebar ----------
+  function renderSidebar(){
+    const el = document.getElementById("sidebar");
+    if (!DATA.files.length){
+      el.innerHTML = '<div class="sidebar-empty">No uncommitted changes found.</div>';
+      return;
+    }
+    el.innerHTML = DATA.files.map(f => {
+      const badge = f.changeType === "added" ? "A" : f.changeType === "deleted" ? "D" : "M";
+      const status = fileStatus(f);
+      return `<button class="tree-item ${f.path===state.activePath?'active':''}" data-path="${esc(f.path)}">
+        <span class="type-badge ${f.changeType}">${badge}</span>
+        <span class="fname" title="${esc(f.path)}">${esc(f.path)}</span>
+        <span class="fcounts">${f.additions?`<span class="a">+${f.additions}</span>`:''}${f.deletions?`<span class="d">-${f.deletions}</span>`:''}</span>
+        <span class="decision-dot ${status}"></span>
+      </button>`;
+    }).join("");
+    el.querySelectorAll(".tree-item").forEach(btn => {
+      btn.addEventListener("click", () => { state.activePath = btn.dataset.path; renderAll(); });
+    });
+  }
+
+  // ---------- diff line rendering ----------
+  function renderSide(lines, side){
+    if (!lines.length) return '<div class="diff-line ctx"><span class="ln"></span><span class="txt">&nbsp;</span></div>';
+    return lines.map(l => {
+      const cls = l.type === "ctx" ? "ctx" : (side === "old" ? "del" : "add");
+      return `<div class="diff-line ${cls}"><span class="ln">${l.ln}</span><span class="txt">${esc(l.text) || "&nbsp;"}</span></div>`;
+    }).join("");
+  }
+
+  function renderHunk(f, h){
+    const decision = hunkDecisionOf(f.path, h.id);
+    const decCls = decision === "accept" ? "decided-accept" : "decided-reject";
+    return `<div class="hunk ${decCls}" data-hunk="${h.id}">
+      <div class="hunk-toolbar">
+        <span class="loc">@@ -${h.oldStart},${h.oldLines} +${h.newStart},${h.newLines} @@</span>
+        <span class="spacer"></span>
+        <button class="btn small ${decision==='accept'?'ghost-add':''}" data-act="accept" data-hunk="${h.id}">Approve</button>
+        <button class="btn small ${decision==='reject'?'ghost-del':''}" data-act="reject" data-hunk="${h.id}">Reject</button>
+      </div>
+      <div class="hunk-side old">${renderSide(h.old, "old")}</div>
+      <div class="connector">&#8594;</div>
+      <div class="hunk-side new">${renderSide(h.new, "new")}</div>
+    </div>`;
+  }
+
+  function renderFullFile(f){
+    const oldLines = (f.oldContent || "").split("\n");
+    const newLines = (f.newContent || "").split("\n");
+    const oldHtml = oldLines.map((t,i) => `<div class="diff-line ctx"><span class="ln">${i+1}</span><span class="txt">${esc(t)||"&nbsp;"}</span></div>`).join("");
+    const newHtml = newLines.map((t,i) => `<div class="diff-line ctx"><span class="ln">${i+1}</span><span class="txt">${esc(t)||"&nbsp;"}</span></div>`).join("");
+    return `<div class="full-file" style="display:grid;grid-template-columns:1fr 34px 1fr;">
+      <div class="hunk-side old">${oldHtml}</div>
+      <div class="connector" style="grid-row:1;">&#8594;</div>
+      <div class="hunk-side new">${newHtml}</div>
+    </div>`;
+  }
+
+  function renderMain(){
+    const el = document.getElementById("main");
+    const f = fileByPath(state.activePath);
+    if (!f){
+      el.innerHTML = `<div class="empty-state"><span>Select a file on the left</span></div>`;
+      return;
+    }
+    const mode = state.fileMode[f.path] || "hunks";
+    let body = "";
+
+    if (f.binary){
+      body = `<div class="banner">Binary file — no inline diff available. ${f.changeType} file, decide at the file level using the tree.</div>`;
+    } else if (f.changeType === "added" || f.changeType === "deleted"){
+      const label = f.changeType === "added" ? "New file" : "Deleted file";
+      const d = state.fileDecision[f.path] || "accept";
+      body = `<div class="banner ${d==='accept'?'':'done'}">${label} — ${d === 'accept' ? (f.changeType==='added' ? 'kept as created' : 'kept deleted') : (f.changeType==='added' ? 'will be removed' : 'will be restored')}</div>`
+        + (mode === "full" || f.hunks.length===0 ? renderFullFile(f) : f.hunks.map(h => renderHunk(f,h)).join(""));
+    } else {
+      body = mode === "full" ? renderFullFile(f) : (f.hunks.length ? f.hunks.map(h => renderHunk(f,h)).join("") : `<div class="banner">No textual changes.</div>`);
+    }
+
+    const fileLevelControls = (f.changeType === "added" || f.changeType === "deleted") ? `
+      <button class="btn small ghost-add" data-file-act="accept">Approve</button>
+      <button class="btn small ghost-del" data-file-act="reject">Reject</button>` : "";
+
+    el.innerHTML = `
+      <div class="file-header">
+        <span class="file-path">${esc(f.path)}</span>
+        ${fileLevelControls}
+        <span class="spacer"></span>
+        <div class="view-toggle">
+          <button data-mode="hunks" class="${mode==='hunks'?'active':''}">Changed only</button>
+          <button data-mode="full" class="${mode==='full'?'active':''}">Full file</button>
+        </div>
+      </div>
+      ${body}
+    `;
+
+    el.querySelectorAll("[data-mode]").forEach(btn => {
+      btn.addEventListener("click", () => { state.fileMode[f.path] = btn.dataset.mode; renderAll(); });
+    });
+    el.querySelectorAll("[data-act]").forEach(btn => {
+      btn.addEventListener("click", () => {
+        state.hunkDecision[hkey(f.path, btn.dataset.hunk)] = btn.dataset.act;
+        renderAll();
+      });
+    });
+    el.querySelectorAll("[data-file-act]").forEach(btn => {
+      btn.addEventListener("click", () => {
+        state.fileDecision[f.path] = btn.dataset.fileAct;
+        renderAll();
+      });
+    });
+  }
+
+  function renderStats(){
+    document.getElementById("repoName").textContent = DATA.repo ? "· " + DATA.repo : "";
+    document.getElementById("fileCountStat").innerHTML = `<b>${DATA.files.length}</b> file${DATA.files.length===1?'':'s'} changed`;
+    const add = DATA.files.reduce((s,f)=>s+f.additions,0);
+    const del = DATA.files.reduce((s,f)=>s+f.deletions,0);
+    document.getElementById("addPill").textContent = "+" + add;
+    document.getElementById("delPill").textContent = "-" + del;
+  }
+
+  function setAll(decision){
+    DATA.files.forEach(f => {
+      if (f.changeType === "added" || f.changeType === "deleted"){
+        state.fileDecision[f.path] = decision;
+      }
+      f.hunks.forEach(h => { state.hunkDecision[hkey(f.path, h.id)] = decision; });
+    });
+    renderAll();
+  }
+
+  function buildDecisions(){
+    const files = {};
+    DATA.files.forEach(f => {
+      const entry = { hunks: {} };
+      if (f.changeType === "added" || f.changeType === "deleted"){
+        entry.file = state.fileDecision[f.path] || "accept";
+      } else {
+        entry.file = "accept";
+      }
+      f.hunks.forEach(h => { entry.hunks[h.id] = hunkDecisionOf(f.path, h.id); });
+      files[f.path] = entry;
+    });
+    return { files, submittedAt: new Date().toISOString() };
+  }
+
+  async function submit(){
+    const decisions = buildDecisions();
+    const btn = document.getElementById("submitBtn");
+    btn.disabled = true;
+    btn.textContent = "Submitting…";
+    const main = document.getElementById("main");
+    try{
+      const res = await fetch("/submit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(decisions),
+      });
+      if (!res.ok) throw new Error("server responded " + res.status);
+      state.submitted = true;
+      btn.textContent = "Submitted ✓";
+      main.insertAdjacentHTML("afterbegin", `<div class="banner done">Review submitted to Claude Code — you can close this tab.</div>`);
+    } catch(e){
+      btn.disabled = false;
+      btn.textContent = "Submit review";
+      main.insertAdjacentHTML("afterbegin", `<div class="banner" style="background:var(--del-bg);color:var(--del-text);">Couldn't reach the local review server (${esc(e.message)}). Is it still running?</div>`);
+    }
+  }
+
+  function renderAll(){
+    renderStats();
+    renderSidebar();
+    renderMain();
+  }
+
+  document.getElementById("acceptAllBtn").addEventListener("click", () => setAll("accept"));
+  document.getElementById("rejectAllBtn").addEventListener("click", () => setAll("reject"));
+  document.getElementById("submitBtn").addEventListener("click", submit);
+
+  renderAll();
+})();
+</script>

@@ -154,6 +154,29 @@ diagram this document
 
 ---
 
+### 🔍 Review Changes
+
+> A merge-request-style visual review for AI-made edits — entirely local, nothing leaves the machine.
+
+After Claude finishes a chunk of implementation work, Review Changes opens a browser page served from `127.0.0.1`: a file tree of everything touched, an old-block → new-block diff per hunk with a connecting arrow, and a toggle to see the full file for context. Approve or reject at the hunk, file, or whole-review level, then submit — Claude reads the decision back over a local POST and reconstructs each file accordingly. No git writes anywhere in the flow (no `add`/`commit`/`checkout`/`reset`); the user still stages and commits everything themselves.
+
+**Install:**
+
+```bash
+npx openskills install mdkouki/claude-skills/review-changes
+```
+
+**Trigger phrases:**
+
+```
+review these changes visually
+let me review this before we commit
+show me a visual diff
+open a review page for these changes
+```
+
+---
+
 ## Installation
 
 Requires [Node.js](https://nodejs.org/) 20.6+ and Git.
@@ -194,9 +217,13 @@ claude-skills/
 │   └── references/
 ├── owl/
 │   └── SKILL.md
-└── professor/
+├── professor/
+│   ├── SKILL.md
+│   └── references/
+└── review-changes/
     ├── SKILL.md
-    └── references/
+    ├── scripts/
+    └── assets/
 ```
 
 Each skill is a self-contained folder. More skills will be added here over time.
@@ -212,3 +239,7 @@ Issues and PRs are welcome. See [CONTRIBUTING.md](./CONTRIBUTING.md) for how to 
 ## License
 
 MIT — see [LICENSE](./LICENSE).
+
+---
+
+Made with 🦎 by the claude-skills contributors.
