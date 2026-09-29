@@ -131,7 +131,9 @@ def parse_hunks(diff_text):
 
 
 def is_binary_diff(diff_text):
-    return "Binary files" in diff_text or "GIT binary patch" in diff_text
+    # anchor to line starts: a text file that merely mentions "Binary files"
+    # (like this skill's own SKILL.md) must not be mistaken for a binary diff
+    return any(l.startswith(("Binary files ", "GIT binary patch")) for l in diff_text.splitlines())
 
 
 def build_modified_or_deleted(root, path, change_type):

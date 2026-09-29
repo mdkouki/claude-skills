@@ -5,7 +5,11 @@ diff data produced by build_review_data.py. Never calls git — this only
 writes/deletes plain files on disk, so it doesn't conflict with a
 never-mutate-git policy. The user still stages/commits everything themselves.
 
-Usage: apply_review.py <review-data.json> <decisions.json>
+Usage: apply_review.py <review-data.json> <decisions.json> <repo-root> [--reject-all]
+
+--reject-all is the "red light": ignore decisions.json and revert every
+modification (decisions.json is still required on the command line, any
+valid file will do).
 
 decisions.json shape:
 {
@@ -53,13 +57,15 @@ def reconstruct(old_content, hunks, hunk_decisions):
 
 
 def main():
-    if len(sys.argv) != 4:
-        print("usage: apply_review.py <review-data.json> <decisions.json> <repo-root>", file=sys.stderr)
+    argv = [a for a in sys.argv[1:] if a != "--reject-all"]
+    reject_all = len(argv) != len(sys.argv) - 1
+    if len(argv) != 3:
+        print("usage: apply_review.py <review-data.json> <decisions.json> <repo-root> [--reject-all]", file=sys.stderr)
         sys.exit(1)
 
-    data = json.loads(Path(sys.argv[1]).read_text())
-    decisions = json.loads(Path(sys.argv[2]).read_text())
-    root = Path(sys.argv[3])
+    data = json.loads(Path(argv[0]).read_text())
+    decisions = json.loads(Path(argv[1]).read_text())
+    root = Path(argv[2])
 
     file_decisions = decisions.get("files", {})
     summary = {"kept": [], "reverted": [], "deleted": [], "restored": [], "unchanged": []}
@@ -67,8 +73,8 @@ def main():
     for f in data["files"]:
         path = f["path"]
         dec = file_decisions.get(path, {})
-        file_level = dec.get("file", "accept")
-        hunk_decisions = dec.get("hunks", {})
+        file_level = "reject" if reject_all else dec.get("file", "accept")
+        hunk_decisions = {} if reject_all else dec.get("hunks", {})
         target = root / path
 
         if f.get("binary") or f.get("error"):

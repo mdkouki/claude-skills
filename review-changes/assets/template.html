@@ -170,16 +170,65 @@
 
   ::-webkit-scrollbar{ width:10px; height:10px; }
   ::-webkit-scrollbar-thumb{ background:var(--border); border-radius:99px; }
+
+  /* ---------- review board additions ---------- */
+  .tabs{ display:flex; gap:6px; padding:0 12px 10px; }
+  .tab{
+    flex:1; display:flex; flex-direction:column; align-items:flex-start; gap:2px; text-align:left;
+    border:1px solid var(--border); background:var(--surface-2); color:var(--text); font:inherit; font-size:12.5px; font-weight:600;
+    padding:8px 10px; border-radius:8px; cursor:pointer;
+  }
+  .tab.active{ background:var(--accent-soft); border-color:var(--accent); color:var(--accent); }
+  .side-label{ padding:6px 14px 4px; font-size:11px; font-weight:700; letter-spacing:.06em; text-transform:uppercase; color:var(--text-faint); }
+  .count{ font-size:11px; font-weight:600; color:var(--text-faint); }
+  .count.warn{ color:var(--warn); }
+  .tree-item .decision-dot.pending{ background:var(--warn); }
+
+  .hunk.pending{ border-color:var(--warn); box-shadow:0 0 0 1px var(--warn), var(--shadow); }
+  .card-head{ grid-column:1 / -1; padding:10px 12px 8px; border-bottom:1px solid var(--border); }
+  .card-title{ font-weight:600; font-size:13.5px; display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
+  .card-sub{ color:var(--text-dim); font-size:12.5px; margin-top:2px; }
+  .card-sub code{ font-size:11.5px; color:var(--text-faint); }
+  .chip{
+    display:inline-flex; align-items:center; padding:1px 8px; border-radius:99px; font-size:11px; font-weight:600;
+    background:var(--surface-2); color:var(--text-dim); border:1px solid var(--border);
+  }
+  .chip.accept{ background:var(--add-bg); color:var(--add-text); border-color:var(--add-line); }
+  .chip.reject{ background:var(--del-bg); color:var(--del-text); border-color:var(--del-line); }
+  .chip.pending, .chip.important, .chip.override{ background:var(--warn-soft); color:var(--warn); border-color:transparent; }
+  .chip.r-behavior{ background:var(--accent-soft); color:var(--accent); border-color:transparent; }
+  .chip.r-architecture{ background:#efe6fb; color:#6b3fb0; border-color:transparent; }
+  .chip.r-side-effect{ background:var(--del-bg); color:var(--del-text); border-color:transparent; }
+  @media (prefers-color-scheme: dark){ :root:not([data-theme="light"]) .chip.r-architecture{ background:#2d2245; color:#b79bee; } }
+  :root[data-theme="dark"] .chip.r-architecture{ background:#2d2245; color:#b79bee; }
+
+  .minor-row{
+    display:grid; grid-template-columns:1fr auto; gap:6px 12px; align-items:start; margin-bottom:10px;
+    padding:10px 12px; border:1px solid var(--border); border-left:4px solid var(--add-text); border-radius:10px;
+    background:var(--surface);
+  }
+  .minor-row.rej{ border-left-color:var(--del-text); }
+  .minor-actions{ display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-end; }
+  .llm-verdict{ font-size:12px; color:var(--text-faint); margin-top:4px; }
+  .minor-diff{ grid-column:1 / -1; }
+  .minor-diff summary{ cursor:pointer; font-size:12px; font-weight:600; color:var(--accent); }
+  .minor-diff .loc{ font-family:"IBM Plex Mono",monospace; color:var(--text-faint); font-weight:400; margin-left:6px; }
+  .hunk.plain{ margin:8px 0 0; box-shadow:none; }
+
+  #overlay{ position:fixed; inset:0; z-index:50; background:var(--bg); overflow-y:auto; padding:32px 16px; }
+  .overlay-inner{ max-width:980px; margin:0 auto; }
+  .overlay-inner h2{ margin:0 0 4px; font-size:22px; }
+  .dim{ color:var(--text-dim); }
 </style>
 
 <div class="app">
   <div class="toolbar">
-    <h1>Change Review <span class="repo" id="repoName"></span></h1>
+    <h1>Change Review Board <span class="repo" id="repoName"></span></h1>
     <div class="stat" id="fileCountStat"></div>
     <div class="stat"><span class="pill add" id="addPill"></span><span class="pill del" id="delPill"></span></div>
     <div class="spacer"></div>
-    <button class="btn ghost-add small" id="acceptAllBtn">Approve all</button>
-    <button class="btn ghost-del small" id="rejectAllBtn">Reject all</button>
+    <button class="btn ghost-add small" id="acceptAllBtn">Approve all important</button>
+    <button class="btn ghost-del small" id="rejectAllBtn">Reject all important</button>
     <button class="btn primary" id="submitBtn">Submit review</button>
   </div>
 
@@ -191,59 +240,57 @@
 
 <script>
 (function(){
-  // ---- data injected by the skill at publish time ----
+  // ---- data injected by the skill at build time ----
   const DATA = window.__REVIEW_DATA__ || {generatedAt:"", repo:"", files:[]};
 
+  // ---- one "item" per hunk (modified files) or per whole file (added/deleted) ----
+  const ITEMS = [];
+  DATA.files.forEach(f => {
+    if (f.binary || f.error) return;
+    if (f.changeType === "added" || f.changeType === "deleted"){
+      ITEMS.push({ key:f.path, ident:"file", f, h:null, cls: f.cls || fallbackCls(f.path) });
+    } else {
+      f.hunks.forEach(h => ITEMS.push({ key:f.path + "::" + h.id, ident:h.id, f, h, cls: h.cls || fallbackCls(f.path + " " + h.id) }));
+    }
+  });
+  function fallbackCls(title){
+    return { importance:"important", reasons:["unclassified"], title, rationale:"Not classified — needs a human look." };
+  }
+
   const state = {
+    view: ITEMS.some(i => i.cls.importance === "important") ? "important" : (ITEMS.length ? "minor" : "files"),
     activePath: DATA.files[0] ? DATA.files[0].path : null,
-    fileMode: {},      // path -> 'hunks' | 'full'
-    fileDecision: {},  // path -> 'accept' | 'reject' (whole-file override, e.g. add/delete)
-    hunkDecision: {},  // "path::hunkId" -> 'accept' | 'reject'
-    submitted: false,
+    fileMode: {},   // path -> 'hunks' | 'full'
+    user: {},       // item key -> 'accept' | 'reject'  (explicit user decisions only)
+    expanded: {},   // item key -> bool (minor rows: diff open)
+    phase: "review" // 'review' | 'done'
   };
 
-  function hkey(path, id){ return path + "::" + id; }
-  function fileByPath(p){ return DATA.files.find(f => f.path === p); }
   function esc(s){
     return (s ?? "").replace(/[&<>]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
   }
-  function hunkDecisionOf(path, id){ return state.hunkDecision[hkey(path,id)] || "accept"; }
+  function fileByPath(p){ return DATA.files.find(f => f.path === p); }
+  function isImportant(it){ return it.cls.importance === "important"; }
+
+  // user decision beats the LLM's; an important item with neither is pending (null)
+  function decisionOf(it){
+    if (state.user[it.key]) return state.user[it.key];
+    return isImportant(it) ? null : it.cls.llmDecision;
+  }
+  function byOf(it){ return state.user[it.key] ? "user" : "llm"; }
+  function pendingImportant(){ return ITEMS.filter(i => isImportant(i) && !decisionOf(i)); }
 
   function fileStatus(f){
-    if (f.changeType === "added" || f.changeType === "deleted"){
-      const d = state.fileDecision[f.path] || "accept";
-      return d;
-    }
-    if (!f.hunks.length) return "accept";
-    const decisions = f.hunks.map(h => hunkDecisionOf(f.path, h.id));
-    if (decisions.every(d => d === "accept")) return "accept";
-    if (decisions.every(d => d === "reject")) return "reject";
+    const its = ITEMS.filter(i => i.f === f);
+    if (!its.length) return "accept";
+    const ds = its.map(decisionOf);
+    if (ds.some(d => !d)) return "pending";
+    if (ds.every(d => d === "accept")) return "accept";
+    if (ds.every(d => d === "reject")) return "reject";
     return "partial";
   }
 
-  // ---------- sidebar ----------
-  function renderSidebar(){
-    const el = document.getElementById("sidebar");
-    if (!DATA.files.length){
-      el.innerHTML = '<div class="sidebar-empty">No uncommitted changes found.</div>';
-      return;
-    }
-    el.innerHTML = DATA.files.map(f => {
-      const badge = f.changeType === "added" ? "A" : f.changeType === "deleted" ? "D" : "M";
-      const status = fileStatus(f);
-      return `<button class="tree-item ${f.path===state.activePath?'active':''}" data-path="${esc(f.path)}">
-        <span class="type-badge ${f.changeType}">${badge}</span>
-        <span class="fname" title="${esc(f.path)}">${esc(f.path)}</span>
-        <span class="fcounts">${f.additions?`<span class="a">+${f.additions}</span>`:''}${f.deletions?`<span class="d">-${f.deletions}</span>`:''}</span>
-        <span class="decision-dot ${status}"></span>
-      </button>`;
-    }).join("");
-    el.querySelectorAll(".tree-item").forEach(btn => {
-      btn.addEventListener("click", () => { state.activePath = btn.dataset.path; renderAll(); });
-    });
-  }
-
-  // ---------- diff line rendering ----------
+  // ---------- diff rendering ----------
   function renderSide(lines, side){
     if (!lines.length) return '<div class="diff-line ctx"><span class="ln"></span><span class="txt">&nbsp;</span></div>';
     return lines.map(l => {
@@ -251,155 +298,212 @@
       return `<div class="diff-line ${cls}"><span class="ln">${l.ln}</span><span class="txt">${esc(l.text) || "&nbsp;"}</span></div>`;
     }).join("");
   }
-
-  function renderHunk(f, h){
-    const decision = hunkDecisionOf(f.path, h.id);
-    const decCls = decision === "accept" ? "decided-accept" : "decided-reject";
-    return `<div class="hunk ${decCls}" data-hunk="${h.id}">
-      <div class="hunk-toolbar">
-        <span class="loc">@@ -${h.oldStart},${h.oldLines} +${h.newStart},${h.newLines} @@</span>
-        <span class="spacer"></span>
-        <button class="btn small ${decision==='accept'?'ghost-add':''}" data-act="accept" data-hunk="${h.id}">Approve</button>
-        <button class="btn small ${decision==='reject'?'ghost-del':''}" data-act="reject" data-hunk="${h.id}">Reject</button>
-      </div>
-      <div class="hunk-side old">${renderSide(h.old, "old")}</div>
+  function itemHunks(it){ return it.h ? [it.h] : it.f.hunks; }
+  function sidesHtml(it){
+    const hs = itemHunks(it);
+    const old = hs.flatMap(h => h.old), nw = hs.flatMap(h => h.new);
+    return `<div class="hunk-side old">${renderSide(old, "old")}</div>
       <div class="connector">&#8594;</div>
-      <div class="hunk-side new">${renderSide(h.new, "new")}</div>
+      <div class="hunk-side new">${renderSide(nw, "new")}</div>`;
+  }
+  function locOf(it){
+    if (it.h) return `@@ -${it.h.oldStart},${it.h.oldLines} +${it.h.newStart},${it.h.newLines} @@`;
+    return it.f.changeType === "added" ? "new file" : "deleted file";
+  }
+  function decBtns(it, cur){
+    const own = state.user[it.key];
+    return `<button class="btn small ${cur==='accept'?'ghost-add':''}" data-act="accept" data-key="${esc(it.key)}">Approve</button>
+      <button class="btn small ${cur==='reject'?'ghost-del':''}" data-act="reject" data-key="${esc(it.key)}">Reject</button>
+      ${own && !isImportant(it) ? `<button class="btn small" data-act="reset" data-key="${esc(it.key)}" title="Go back to Claude's decision">&#8634; Claude</button>` : ""}`;
+  }
+  function chips(it){
+    return isImportant(it) ? it.cls.reasons.map(r => `<span class="chip r-${r}">${esc(r)}</span>`).join("") : "";
+  }
+
+  // important item: full side-by-side card, blocks Submit until decided
+  function renderImportant(it, showPath){
+    const cur = decisionOf(it);
+    const cls = cur === "accept" ? "decided-accept" : cur === "reject" ? "decided-reject" : "pending";
+    return `<div class="hunk ${cls}">
+      <div class="card-head">
+        <div class="card-title">${esc(it.cls.title)} ${chips(it)}${cur ? "" : '<span class="chip pending">needs your decision</span>'}</div>
+        <div class="card-sub">${showPath ? `<code>${esc(it.f.path)}</code> · ` : ""}${esc(it.cls.rationale)}</div>
+      </div>
+      <div class="hunk-toolbar">
+        <span class="loc">${locOf(it)}</span><span class="spacer"></span>${decBtns(it, cur)}
+      </div>
+      ${sidesHtml(it)}
+    </div>`;
+  }
+
+  // minor item: compact row with Claude's pre-decision, diff on demand
+  function renderMinor(it, showPath){
+    const cur = decisionOf(it), by = byOf(it);
+    const flipped = by === "user" && cur !== it.cls.llmDecision;
+    return `<div class="minor-row ${cur === 'reject' ? 'rej' : 'acc'}">
+      <div class="minor-main">
+        <div class="card-title">${esc(it.cls.title)}
+          <span class="chip ${cur}">${cur === "accept" ? "approved" : "rejected"} by ${by === "user" ? "you" : "Claude"}</span>
+          ${flipped ? '<span class="chip override">override</span>' : ""}
+        </div>
+        <div class="card-sub">${showPath ? `<code>${esc(it.f.path)}</code> · ` : ""}${esc(it.cls.rationale)}</div>
+        <div class="llm-verdict">Claude's call: <b>${it.cls.llmDecision}</b>${it.cls.llmWhy ? " — " + esc(it.cls.llmWhy) : ""}</div>
+      </div>
+      <div class="minor-actions">${decBtns(it, cur)}</div>
+      <details class="minor-diff" data-key="${esc(it.key)}" ${state.expanded[it.key] ? "open" : ""}>
+        <summary>Show diff <span class="loc">${locOf(it)}</span></summary>
+        <div class="hunk plain">${sidesHtml(it)}</div>
+      </details>
     </div>`;
   }
 
   function renderFullFile(f){
     const oldLines = (f.oldContent || "").split("\n");
     const newLines = (f.newContent || "").split("\n");
-    const oldHtml = oldLines.map((t,i) => `<div class="diff-line ctx"><span class="ln">${i+1}</span><span class="txt">${esc(t)||"&nbsp;"}</span></div>`).join("");
-    const newHtml = newLines.map((t,i) => `<div class="diff-line ctx"><span class="ln">${i+1}</span><span class="txt">${esc(t)||"&nbsp;"}</span></div>`).join("");
+    const mk = ls => ls.map((t,i) => `<div class="diff-line ctx"><span class="ln">${i+1}</span><span class="txt">${esc(t)||"&nbsp;"}</span></div>`).join("");
     return `<div class="full-file" style="display:grid;grid-template-columns:1fr 34px 1fr;">
-      <div class="hunk-side old">${oldHtml}</div>
+      <div class="hunk-side old">${mk(oldLines)}</div>
       <div class="connector" style="grid-row:1;">&#8594;</div>
-      <div class="hunk-side new">${newHtml}</div>
+      <div class="hunk-side new">${mk(newLines)}</div>
     </div>`;
   }
 
+  // ---------- sidebar ----------
+  function renderSidebar(){
+    const el = document.getElementById("sidebar");
+    const imp = ITEMS.filter(isImportant), min = ITEMS.filter(i => !isImportant(i));
+    const pend = pendingImportant().length;
+    const tabs = `<div class="tabs">
+      <button class="tab ${state.view==='important'?'active':''}" data-view="important">Important <span class="count ${pend?'warn':''}">${pend ? pend + " to decide" : imp.length}</span></button>
+      <button class="tab ${state.view==='minor'?'active':''}" data-view="minor">Minor <span class="count">${min.length}</span></button>
+    </div><div class="side-label">Files</div>`;
+    if (!DATA.files.length){
+      el.innerHTML = tabs + '<div class="sidebar-empty">No uncommitted changes found.</div>';
+    } else {
+      el.innerHTML = tabs + DATA.files.map(f => {
+        const badge = f.changeType === "added" ? "A" : f.changeType === "deleted" ? "D" : "M";
+        const nImp = ITEMS.filter(i => i.f === f && isImportant(i)).length;
+        return `<button class="tree-item ${state.view==='files' && f.path===state.activePath?'active':''}" data-path="${esc(f.path)}">
+          <span class="type-badge ${f.changeType}">${badge}</span>
+          <span class="fname" title="${esc(f.path)}">${esc(f.path)}</span>
+          ${nImp ? `<span class="count warn" title="important changes">${nImp}!</span>` : ""}
+          <span class="fcounts">${f.additions?`<span class="a">+${f.additions}</span>`:''}${f.deletions?`<span class="d">-${f.deletions}</span>`:''}</span>
+          <span class="decision-dot ${fileStatus(f)}"></span>
+        </button>`;
+      }).join("");
+    }
+    el.querySelectorAll("[data-view]").forEach(b => b.addEventListener("click", () => { state.view = b.dataset.view; renderAll(); }));
+    el.querySelectorAll(".tree-item").forEach(b => b.addEventListener("click", () => { state.activePath = b.dataset.path; state.view = "files"; renderAll(); }));
+  }
+
+  // ---------- main ----------
   function renderMain(){
     const el = document.getElementById("main");
-    const f = fileByPath(state.activePath);
-    if (!f){
-      el.innerHTML = `<div class="empty-state"><span>Select a file on the left</span></div>`;
-      return;
-    }
-    const mode = state.fileMode[f.path] || "hunks";
-    let body = "";
-
-    if (f.binary){
-      body = `<div class="banner">Binary file — no inline diff available. ${f.changeType} file, decide at the file level using the tree.</div>`;
-    } else if (f.changeType === "added" || f.changeType === "deleted"){
-      const label = f.changeType === "added" ? "New file" : "Deleted file";
-      const d = state.fileDecision[f.path] || "accept";
-      body = `<div class="banner ${d==='accept'?'':'done'}">${label} — ${d === 'accept' ? (f.changeType==='added' ? 'kept as created' : 'kept deleted') : (f.changeType==='added' ? 'will be removed' : 'will be restored')}</div>`
-        + (mode === "full" || f.hunks.length===0 ? renderFullFile(f) : f.hunks.map(h => renderHunk(f,h)).join(""));
+    let html = "";
+    if (state.view === "important"){
+      const list = ITEMS.filter(isImportant);
+      html = `<div class="banner">Changes that alter behavior, architecture or have side effects — these are yours to decide.</div>`
+        + (list.length ? list.map(i => renderImportant(i, true)).join("") : `<div class="empty-state"><span>Nothing important in this change set.</span></div>`);
+    } else if (state.view === "minor"){
+      const list = ITEMS.filter(i => !isImportant(i));
+      html = `<div class="banner">Pre-reviewed by Claude. Leave them alone to keep Claude's call, or override any of them — your click wins in either direction.</div>`
+        + (list.length ? list.map(i => renderMinor(i, true)).join("") : `<div class="empty-state"><span>No minor changes.</span></div>`);
     } else {
-      body = mode === "full" ? renderFullFile(f) : (f.hunks.length ? f.hunks.map(h => renderHunk(f,h)).join("") : `<div class="banner">No textual changes.</div>`);
+      const f = fileByPath(state.activePath);
+      if (!f){ el.innerHTML = `<div class="empty-state"><span>Select a file on the left</span></div>`; return; }
+      const mode = state.fileMode[f.path] || "hunks";
+      let body;
+      if (f.binary || f.error){
+        body = `<div class="banner">Binary or unreadable file — no inline diff, and it is left untouched by this review.</div>`;
+      } else if (mode === "full"){
+        body = renderFullFile(f);
+      } else {
+        const its = ITEMS.filter(i => i.f === f);
+        body = its.length ? its.map(i => isImportant(i) ? renderImportant(i, false) : renderMinor(i, false)).join("") : `<div class="banner">No textual changes.</div>`;
+      }
+      html = `<div class="file-header">
+          <span class="file-path">${esc(f.path)}</span><span class="spacer"></span>
+          <div class="view-toggle">
+            <button data-mode="hunks" class="${mode==='hunks'?'active':''}">Changed only</button>
+            <button data-mode="full" class="${mode==='full'?'active':''}">Full file</button>
+          </div></div>` + body;
     }
+    el.innerHTML = html;
 
-    const fileLevelControls = (f.changeType === "added" || f.changeType === "deleted") ? `
-      <button class="btn small ghost-add" data-file-act="accept">Approve</button>
-      <button class="btn small ghost-del" data-file-act="reject">Reject</button>` : "";
-
-    el.innerHTML = `
-      <div class="file-header">
-        <span class="file-path">${esc(f.path)}</span>
-        ${fileLevelControls}
-        <span class="spacer"></span>
-        <div class="view-toggle">
-          <button data-mode="hunks" class="${mode==='hunks'?'active':''}">Changed only</button>
-          <button data-mode="full" class="${mode==='full'?'active':''}">Full file</button>
-        </div>
-      </div>
-      ${body}
-    `;
-
-    el.querySelectorAll("[data-mode]").forEach(btn => {
-      btn.addEventListener("click", () => { state.fileMode[f.path] = btn.dataset.mode; renderAll(); });
-    });
-    el.querySelectorAll("[data-act]").forEach(btn => {
-      btn.addEventListener("click", () => {
-        state.hunkDecision[hkey(f.path, btn.dataset.hunk)] = btn.dataset.act;
-        renderAll();
-      });
-    });
-    el.querySelectorAll("[data-file-act]").forEach(btn => {
-      btn.addEventListener("click", () => {
-        state.fileDecision[f.path] = btn.dataset.fileAct;
-        renderAll();
-      });
-    });
+    el.querySelectorAll("[data-mode]").forEach(b => b.addEventListener("click", () => { state.fileMode[state.activePath] = b.dataset.mode; renderAll(); }));
+    el.querySelectorAll("[data-act]").forEach(b => b.addEventListener("click", () => {
+      if (b.dataset.act === "reset") delete state.user[b.dataset.key];
+      else state.user[b.dataset.key] = b.dataset.act;
+      const y = document.getElementById("main").scrollTop;
+      renderAll();
+      document.getElementById("main").scrollTop = y;
+    }));
+    el.querySelectorAll("details.minor-diff").forEach(d => d.addEventListener("toggle", () => { state.expanded[d.dataset.key] = d.open; }));
   }
 
   function renderStats(){
     document.getElementById("repoName").textContent = DATA.repo ? "· " + DATA.repo : "";
-    document.getElementById("fileCountStat").innerHTML = `<b>${DATA.files.length}</b> file${DATA.files.length===1?'':'s'} changed`;
-    const add = DATA.files.reduce((s,f)=>s+f.additions,0);
-    const del = DATA.files.reduce((s,f)=>s+f.deletions,0);
-    document.getElementById("addPill").textContent = "+" + add;
-    document.getElementById("delPill").textContent = "-" + del;
+    const imp = ITEMS.filter(isImportant).length;
+    const pend = pendingImportant().length;
+    document.getElementById("fileCountStat").innerHTML =
+      `<b>${DATA.files.length}</b> file${DATA.files.length===1?'':'s'} · <b>${imp}</b> important · <b>${ITEMS.length - imp}</b> minor`;
+    document.getElementById("addPill").textContent = "+" + DATA.files.reduce((s,f)=>s+f.additions,0);
+    document.getElementById("delPill").textContent = "-" + DATA.files.reduce((s,f)=>s+f.deletions,0);
+    const btn = document.getElementById("submitBtn");
+    btn.disabled = pend > 0 || state.phase !== "review";
+    btn.title = pend ? `${pend} important change${pend===1?'':'s'} still need your decision` : "";
+    btn.textContent = pend ? `Submit (${pend} left)` : "Submit review";
   }
 
-  function setAll(decision){
-    DATA.files.forEach(f => {
-      if (f.changeType === "added" || f.changeType === "deleted"){
-        state.fileDecision[f.path] = decision;
-      }
-      f.hunks.forEach(h => { state.hunkDecision[hkey(f.path, h.id)] = decision; });
-    });
+  function setAllImportant(decision){
+    ITEMS.filter(isImportant).forEach(i => { state.user[i.key] = decision; });
     renderAll();
   }
 
+  // ---------- phase 1: submit ----------
   function buildDecisions(){
     const files = {};
     DATA.files.forEach(f => {
-      const entry = { hunks: {} };
-      if (f.changeType === "added" || f.changeType === "deleted"){
-        entry.file = state.fileDecision[f.path] || "accept";
-      } else {
-        entry.file = "accept";
-      }
-      f.hunks.forEach(h => { entry.hunks[h.id] = hunkDecisionOf(f.path, h.id); });
+      if (f.binary || f.error) return;
+      const entry = { file: "accept", hunks: {}, decidedBy: {} };
+      ITEMS.filter(i => i.f === f).forEach(i => {
+        const d = decisionOf(i) || "accept";
+        entry.decidedBy[i.ident] = byOf(i);
+        if (i.ident === "file") entry.file = d; else entry.hunks[i.ident] = d;
+      });
       files[f.path] = entry;
     });
     return { files, submittedAt: new Date().toISOString() };
   }
 
+  function showOverlay(html){
+    let o = document.getElementById("overlay");
+    if (!o){ o = document.createElement("div"); o.id = "overlay"; document.body.appendChild(o); }
+    o.innerHTML = `<div class="overlay-inner">${html}</div>`;
+    return o;
+  }
+
   async function submit(){
-    const decisions = buildDecisions();
-    const btn = document.getElementById("submitBtn");
-    btn.disabled = true;
-    btn.textContent = "Submitting…";
-    const main = document.getElementById("main");
+    if (pendingImportant().length) return;
     try{
-      const res = await fetch("/submit", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(decisions),
-      });
+      const res = await fetch("/submit", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(buildDecisions()) });
       if (!res.ok) throw new Error("server responded " + res.status);
-      state.submitted = true;
-      btn.textContent = "Submitted ✓";
-      main.insertAdjacentHTML("afterbegin", `<div class="banner done">Review submitted to Claude Code — you can close this tab.</div>`);
     } catch(e){
-      btn.disabled = false;
-      btn.textContent = "Submit review";
-      main.insertAdjacentHTML("afterbegin", `<div class="banner" style="background:var(--del-bg);color:var(--del-text);">Couldn't reach the local review server (${esc(e.message)}). Is it still running?</div>`);
+      alert("Couldn't reach the local review server (" + e.message + "). Is it still running?");
+      return;
     }
-  }
-
-  function renderAll(){
+    state.phase = "done";
     renderStats();
-    renderSidebar();
-    renderMain();
+    showOverlay(`<h2>Review submitted</h2><p class="dim">Go back to Claude &mdash; the decision table and the final green/red light are waiting in the terminal. You can close this tab.</p>`);
+    // acknowledge so the server can exit only after this page has its response
+    try { await fetch("/bye", { method:"POST", headers:{"Content-Type":"application/json"}, body:"{}" }); } catch(e){}
+    window.close(); // works when the browser allows it; otherwise the message above stays
   }
 
-  document.getElementById("acceptAllBtn").addEventListener("click", () => setAll("accept"));
-  document.getElementById("rejectAllBtn").addEventListener("click", () => setAll("reject"));
+  function renderAll(){ renderStats(); renderSidebar(); renderMain(); }
+
+  document.getElementById("acceptAllBtn").addEventListener("click", () => setAllImportant("accept"));
+  document.getElementById("rejectAllBtn").addEventListener("click", () => setAllImportant("reject"));
   document.getElementById("submitBtn").addEventListener("click", submit);
 
   renderAll();
